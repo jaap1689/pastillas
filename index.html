@@ -6,33 +6,6 @@
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <link rel="stylesheet" href="style.css">
   <meta name="theme-color" content="#d14ba3">
-  <script type="module">
-    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
-    import {
-      getFirestore, collection, addDoc, getDocs, doc, updateDoc, query, where
-    } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
-
-    const firebaseConfig = {
-      apiKey: "AIzaSyA7FWZQHlmsaGh_JUrVpqK4C_VESNl8_E",
-      authDomain: "pastillitas-de-amor.firebaseapp.com",
-      projectId: "pastillitas-de-amor",
-      storageBucket: "pastillitas-de-amor.appspot.com",
-      messagingSenderId: "639862195724",
-      appId: "1:639862195724:web:5976ab72328037ea29029",
-      measurementId: "G-0TDQ39DX7R"
-    };
-
-    const app = initializeApp(firebaseConfig);
-    const db = getFirestore(app);
-
-    let userId = localStorage.getItem("userId");
-    if (!userId) {
-      userId = "user_" + Math.random().toString(36).substring(2, 10);
-      localStorage.setItem("userId", userId);
-    }
-
-    window.firestore = { db, collection, addDoc, getDocs, updateDoc, doc, query, where, userId };
-  </script>
 </head>
 <body>
 
@@ -48,12 +21,15 @@
 
   <div id="listaPastillas"></div>
 
-  <script type="module">
-    import { Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+  <script>
+    const STORAGE_KEY = "pastillas_local";
+    let pastillas = JSON.parse(localStorage.getItem(STORAGE_KEY)) || [];
 
-    const { db, collection, addDoc, getDocs, updateDoc, doc, query, where, userId } = window.firestore;
+    function guardarLocal() {
+      localStorage.setItem(STORAGE_KEY, JSON.stringify(pastillas));
+    }
 
-    async function agregarPastilla() {
+    function agregarPastilla() {
       const nombre = document.getElementById('nombrePastilla').value.trim();
       const hora = document.getElementById('horaPastilla').value;
       const intervalo = parseInt(document.getElementById('intervaloPastilla').value);
@@ -62,18 +38,9 @@
       if (!nombre || !hora || !intervalo || !dias) return alert("Completa todos los campos 😊");
 
       const tomas = generarTomasPorDias(hora, intervalo, dias);
-
-      for (let toma of tomas) {
-        await addDoc(collection(db, "pastillas"), {
-          userId,
-          nombre,
-          fecha: toma.fecha,
-          hora: toma.hora,
-          completa: false
-        });
-      }
-
-      await cargarPastillas();
+      pastillas.push({ nombre, tomadas: [], programadas: tomas });
+      guardarLocal();
+      renderPastillas();
     }
 
     function generarTomasPorDias(horaInicial, intervalo, dias) {
@@ -81,72 +48,44 @@
       let [h, m] = horaInicial.split(':').map(Number);
 
       for (let d = 0; d < dias; d++) {
-        const base = new Date();
-        base.setDate(base.getDate() + d);
-        base.setHours(h, m, 0, 0);
+        const fechaBase = new Date();
+        fechaBase.setDate(fechaBase.getDate() + d);
+        fechaBase.setHours(h, m, 0, 0);
 
         for (let i = 0; i < 24; i += intervalo) {
-          const toma = new Date(base.getTime());
+          const toma = new Date(fechaBase.getTime());
           toma.setHours(h + i);
-          if (toma.getDate() !== base.getDate()) break;
+          if (toma.getDate() !== fechaBase.getDate()) break;
 
           const fecha = toma.toISOString().split('T')[0];
           const hora = toma.toTimeString().split(':').slice(0, 2).join(':');
-          tomas.push({ fecha, hora });
+          tomas.push({ fecha, hora, completa: false });
         }
       }
 
       return tomas;
     }
 
-    async function cargarPastillas() {
-      const q = query(collection(db, "pastillas"), where("userId", "==", userId));
-      const snapshot = await getDocs(q);
-
-      const data = [];
-      snapshot.forEach(doc => {
-        data.push({ id: doc.id, ...doc.data() });
-      });
-
-      renderPastillas(data);
-    }
-
-    function agruparPorNombre(data) {
-      const grupos = {};
-      data.forEach(p => {
-        if (!grupos[p.nombre]) grupos[p.nombre] = [];
-        grupos[p.nombre].push(p);
-      });
-
-      for (let key in grupos) {
-        grupos[key].sort((a, b) => {
-          const fa = new Date(`${a.fecha}T${a.hora}`);
-          const fb = new Date(`${b.fecha}T${b.hora}`);
-          return fa - fb;
-        });
-      }
-
-      return grupos;
-    }
-
-    function renderPastillas(pastillas) {
+    function renderPastillas() {
       const contenedor = document.getElementById('listaPastillas');
       contenedor.innerHTML = '';
 
-      const agrupadas = agruparPorNombre(pastillas);
-
-      for (let nombre in agrupadas) {
+      pastillas.forEach((p, i) => {
         const div = document.createElement('div');
         div.className = 'pastilla';
 
         const nombreLabel = document.createElement('div');
-        nombreLabel.innerHTML = `<strong>${nombre}</strong>`;
+        nombreLabel.innerHTML = `<strong>${p.nombre}</strong>`;
         div.appendChild(nombreLabel);
 
-        const lista = agrupadas[nombre];
-        let mostradas = 0;
+        const eliminarBtn = document.createElement('button');
+        eliminarBtn.innerText = '❌ Eliminar';
+        eliminarBtn.className = 'eliminar-btn';
+        eliminarBtn.onclick = () => eliminarPastilla(i);
+        div.appendChild(eliminarBtn);
 
-        lista.forEach(t => {
+        let mostradas = 0;
+        p.programadas.forEach((t, j) => {
           const mostrar = t.completa || (!t.completa && mostradas === 0);
           if (mostrar) {
             const item = document.createElement('div');
@@ -154,7 +93,7 @@
             check.type = 'checkbox';
             check.checked = t.completa;
             check.disabled = t.completa;
-            check.onchange = () => marcarComoTomada(t.id);
+            check.onchange = () => marcarComoTomada(i, j);
 
             const label = document.createElement('label');
             label.innerText = ` ${t.fecha} ${t.hora}`;
@@ -166,7 +105,7 @@
           }
         });
 
-        const totalTomadas = lista.filter(t => t.completa).length;
+        const totalTomadas = p.programadas.filter(t => t.completa).length;
         if (totalTomadas > 0) {
           const msg = document.createElement('div');
           msg.className = 'mensaje';
@@ -175,16 +114,45 @@
         }
 
         contenedor.appendChild(div);
+      });
+    }
+
+    function marcarComoTomada(pIndex, tIndex) {
+      pastillas[pIndex].programadas[tIndex].completa = true;
+      guardarLocal();
+      renderPastillas();
+    }
+
+    function eliminarPastilla(index) {
+      if (confirm("¿Eliminar esta pastilla completamente?")) {
+        pastillas.splice(index, 1);
+        guardarLocal();
+        renderPastillas();
       }
     }
 
-    async function marcarComoTomada(id) {
-      const ref = doc(db, "pastillas", id);
-      await updateDoc(ref, { completa: true });
-      await cargarPastillas();
+    renderPastillas();
+  </script>
+
+  <!-- ANIMACIÓN DE PASTILLAS CAYENDO -->
+  <script>
+    function soltarPastillasAnimadas(cantidad = 20) {
+      for (let i = 0; i < cantidad; i++) {
+        const pill = document.createElement("div");
+        pill.className = "falling-pill";
+        pill.style.setProperty("--rand-x", Math.random());
+        pill.innerText = "💊";
+        pill.style.left = `${Math.random() * 100}%`;
+        pill.style.animationDuration = `${4 + Math.random() * 4}s`;
+        pill.style.fontSize = `${16 + Math.random() * 24}px`;
+        document.body.appendChild(pill);
+        setTimeout(() => pill.remove(), 8000);
+      }
     }
 
-    cargarPastillas();
+    setInterval(() => soltarPastillasAnimadas(5), 3000);
+    soltarPastillasAnimadas(10);
   </script>
+
 </body>
 </html>
