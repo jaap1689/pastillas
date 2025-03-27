@@ -1,0 +1,190 @@
+<!DOCTYPE html>
+<html lang="es">
+<head>
+  <meta charset="UTF-8">
+  <title>Pastillitas de amor 💊</title>
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <link rel="stylesheet" href="style.css">
+  <meta name="theme-color" content="#d14ba3">
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-app.js";
+    import {
+      getFirestore, collection, addDoc, getDocs, doc, updateDoc, query, where
+    } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    const firebaseConfig = {
+      apiKey: "AIzaSyA7FWZQHlmsaGh_JUrVpqK4C_VESNl8_E",
+      authDomain: "pastillitas-de-amor.firebaseapp.com",
+      projectId: "pastillitas-de-amor",
+      storageBucket: "pastillitas-de-amor.appspot.com",
+      messagingSenderId: "639862195724",
+      appId: "1:639862195724:web:5976ab72328037ea29029",
+      measurementId: "G-0TDQ39DX7R"
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+
+    let userId = localStorage.getItem("userId");
+    if (!userId) {
+      userId = "user_" + Math.random().toString(36).substring(2, 10);
+      localStorage.setItem("userId", userId);
+    }
+
+    window.firestore = { db, collection, addDoc, getDocs, updateDoc, doc, query, where, userId };
+  </script>
+</head>
+<body>
+
+  <h1>🌸 Pastillitas de amor 🌸</h1>
+
+  <div id="formulario">
+    <input type="text" id="nombrePastilla" placeholder="Nombre de la pastilla 💊">
+    <input type="time" id="horaPastilla">
+    <input type="number" id="intervaloPastilla" placeholder="Cada cuántas horas ⏰">
+    <input type="number" id="diasPastilla" placeholder="¿Cuántos días? 📅">
+    <button onclick="agregarPastilla()">Agregar</button>
+  </div>
+
+  <div id="listaPastillas"></div>
+
+  <script type="module">
+    import { Timestamp } from "https://www.gstatic.com/firebasejs/10.7.1/firebase-firestore.js";
+
+    const { db, collection, addDoc, getDocs, updateDoc, doc, query, where, userId } = window.firestore;
+
+    async function agregarPastilla() {
+      const nombre = document.getElementById('nombrePastilla').value.trim();
+      const hora = document.getElementById('horaPastilla').value;
+      const intervalo = parseInt(document.getElementById('intervaloPastilla').value);
+      const dias = parseInt(document.getElementById('diasPastilla').value);
+
+      if (!nombre || !hora || !intervalo || !dias) return alert("Completa todos los campos 😊");
+
+      const tomas = generarTomasPorDias(hora, intervalo, dias);
+
+      for (let toma of tomas) {
+        await addDoc(collection(db, "pastillas"), {
+          userId,
+          nombre,
+          fecha: toma.fecha,
+          hora: toma.hora,
+          completa: false
+        });
+      }
+
+      await cargarPastillas();
+    }
+
+    function generarTomasPorDias(horaInicial, intervalo, dias) {
+      const tomas = [];
+      let [h, m] = horaInicial.split(':').map(Number);
+
+      for (let d = 0; d < dias; d++) {
+        const base = new Date();
+        base.setDate(base.getDate() + d);
+        base.setHours(h, m, 0, 0);
+
+        for (let i = 0; i < 24; i += intervalo) {
+          const toma = new Date(base.getTime());
+          toma.setHours(h + i);
+          if (toma.getDate() !== base.getDate()) break;
+
+          const fecha = toma.toISOString().split('T')[0];
+          const hora = toma.toTimeString().split(':').slice(0, 2).join(':');
+          tomas.push({ fecha, hora });
+        }
+      }
+
+      return tomas;
+    }
+
+    async function cargarPastillas() {
+      const q = query(collection(db, "pastillas"), where("userId", "==", userId));
+      const snapshot = await getDocs(q);
+
+      const data = [];
+      snapshot.forEach(doc => {
+        data.push({ id: doc.id, ...doc.data() });
+      });
+
+      renderPastillas(data);
+    }
+
+    function agruparPorNombre(data) {
+      const grupos = {};
+      data.forEach(p => {
+        if (!grupos[p.nombre]) grupos[p.nombre] = [];
+        grupos[p.nombre].push(p);
+      });
+
+      for (let key in grupos) {
+        grupos[key].sort((a, b) => {
+          const fa = new Date(`${a.fecha}T${a.hora}`);
+          const fb = new Date(`${b.fecha}T${b.hora}`);
+          return fa - fb;
+        });
+      }
+
+      return grupos;
+    }
+
+    function renderPastillas(pastillas) {
+      const contenedor = document.getElementById('listaPastillas');
+      contenedor.innerHTML = '';
+
+      const agrupadas = agruparPorNombre(pastillas);
+
+      for (let nombre in agrupadas) {
+        const div = document.createElement('div');
+        div.className = 'pastilla';
+
+        const nombreLabel = document.createElement('div');
+        nombreLabel.innerHTML = `<strong>${nombre}</strong>`;
+        div.appendChild(nombreLabel);
+
+        const lista = agrupadas[nombre];
+        let mostradas = 0;
+
+        lista.forEach(t => {
+          const mostrar = t.completa || (!t.completa && mostradas === 0);
+          if (mostrar) {
+            const item = document.createElement('div');
+            const check = document.createElement('input');
+            check.type = 'checkbox';
+            check.checked = t.completa;
+            check.disabled = t.completa;
+            check.onchange = () => marcarComoTomada(t.id);
+
+            const label = document.createElement('label');
+            label.innerText = ` ${t.fecha} ${t.hora}`;
+            item.appendChild(check);
+            item.appendChild(label);
+            div.appendChild(item);
+
+            if (!t.completa) mostradas++;
+          }
+        });
+
+        const totalTomadas = lista.filter(t => t.completa).length;
+        if (totalTomadas > 0) {
+          const msg = document.createElement('div');
+          msg.className = 'mensaje';
+          msg.innerText = `✅ Has tomado esta pastilla ${totalTomadas} vez/veces.`;
+          div.appendChild(msg);
+        }
+
+        contenedor.appendChild(div);
+      }
+    }
+
+    async function marcarComoTomada(id) {
+      const ref = doc(db, "pastillas", id);
+      await updateDoc(ref, { completa: true });
+      await cargarPastillas();
+    }
+
+    cargarPastillas();
+  </script>
+</body>
+</html>
